@@ -13,9 +13,9 @@ load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 MONGO_URI = os.getenv("MONGO_URI")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # Example: https://yourdomain.com/webhook
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
-# MongoDB setup
+# Connect to MongoDB
 mongo_client = MongoClient(MONGO_URI)
 db = mongo_client["anonymous_chat_bot"]
 waiting_users_collection = db["waiting_users"]
@@ -26,16 +26,17 @@ reports_collection = db["reports"]
 def generate_random_name():
     return f"Stranger{random.randint(1000, 9999)}"
 
-# Command handlers
+# /start command
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 Welcome to Anonymous Chat Bot!\n"
         "Use /next to find a partner.\n"
         "Use /stop to end the chat.\n"
-        "Use /report to report issues.\n"
-        "Use /help for full instructions."
+        "Use /report <reason> to report bad behavior.\n"
+        "Use /help for more commands."
     )
 
+# /help command
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "💬 Commands:\n"
@@ -46,6 +47,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/help - Show this help message"
     )
 
+# /next command
 async def next_partner(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.chat_id
 
@@ -68,10 +70,12 @@ async def next_partner(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await context.bot.send_message(chat_id=user_id, text=f"✅ Connected! You are now chatting with {random_name}.")
         await context.bot.send_message(chat_id=partner_id, text=f"✅ Connected! You are now chatting with {random_name}.")
+
     else:
         waiting_users_collection.insert_one({"user_id": user_id})
         await update.message.reply_text("⏳ Waiting for a partner...")
 
+# /stop command
 async def stop_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.chat_id
     active_chat = active_chats_collection.find_one({"user_id": user_id})
@@ -86,9 +90,12 @@ async def stop_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         waiting_users_collection.delete_one({"user_id": user_id})
         await update.message.reply_text("❌ You are not chatting with anyone.")
 
+# /report command
 async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.chat_id
-    report_message = update.message.text.partition(' ')[2].strip() or "No reason given."
+    text = update.message.text
+
+    report_message = text.split("/report", 1)[1].strip() if len(text.split("/report", 1)) > 1 else "No reason given."
 
     reports_collection.insert_one({
         "user_id": user_id,
@@ -98,6 +105,7 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text("✅ Report received. Thank you for helping us keep the community safe!")
 
+# Message relay between users
 async def relay_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.chat_id
     text = update.message.text
@@ -106,43 +114,48 @@ async def relay_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if active_chat:
         partner_id = active_chat['partner_id']
+
+        # Typing simulation
         await context.bot.send_chat_action(chat_id=partner_id, action="typing")
+
+        # Forward message
         await context.bot.send_message(chat_id=partner_id, text=text)
     else:
         await update.message.reply_text("❗ You are not chatting with anyone. Use /next.")
 
+# Unknown command handler
 async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❌ Unknown command.")
 
-# --- Flask App setup ---
-app = Flask(__name__)
-application = ApplicationBuilder().token(BOT_TOKEN).build()
+# Setup Telegram App
+app_telegram = ApplicationBuilder().token(BOT_TOKEN).build()
 
-# Register handlers
-application.add_handler(CommandHandler("start", start))
-application.add_handler(CommandHandler("help", help_command))
-application.add_handler(CommandHandler("next", next_partner))
-application.add_handler(CommandHandler("stop", stop_chat))
-application.add_handler(CommandHandler("report", report))
-application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), relay_message))
-application.add_handler(MessageHandler(filters.COMMAND, unknown))
+app_telegram.add_handler(CommandHandler("start", start))
+app_telegram.add_handler(CommandHandler("help", help_command))
+app_telegram.add_handler(CommandHandler("next", next_partner))
+app_telegram.add_handler(CommandHandler("stop", stop_chat))
+app_telegram.add_handler(CommandHandler("report", report))
+app_telegram.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), relay_message))
+app_telegram.add_handler(MessageHandler(filters.COMMAND, unknown))
 
-# Webhook route
-@app.route("/webhook", methods=["POST"])
-def webhook():
+# Setup Flask app
+app_flask = Flask(__name__)
+
+@app_flask.route('/')
+def home():
+    return 'Bot is running!'
+
+@app_flask.route('/webhook', methods=['POST'])
+async def webhook():
     if request.method == "POST":
-        update = Update.de_json(request.get_json(force=True), application.bot)
-        asyncio.run(application.process_update(update))
-        return "ok", 200
+        update = Update.de_json(request.get_json(force=True), app_telegram.bot)
+        await app_telegram.process_update(update)
+        return 'ok', 200
 
-# Flask start and webhook setting
-if __name__ == "__main__":
-    # Set webhook
-    async def set_webhook():
-        await application.bot.set_webhook(url=f"{WEBHOOK_URL}/webhook")
-        print("Webhook set!")
+if __name__ == '__main__':
+    async def main():
+        await app_telegram.bot.set_webhook(f"{WEBHOOK_URL}/webhook")
+        port = int(os.environ.get('PORT', 5000))
+        app_flask.run(host="0.0.0.0", port=port)
 
-    asyncio.run(set_webhook())
-
-    # Run Flask server
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    asyncio.run(main())
