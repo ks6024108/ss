@@ -1,14 +1,12 @@
 import os
 import random
 import time
+import asyncio
 from dotenv import load_dotenv
 from pymongo import MongoClient
 from flask import Flask, request
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
-import asyncio
-
-bot_started = False
 
 # Load environment variables
 load_dotenv()
@@ -27,7 +25,7 @@ reports_collection = db["reports"]
 def generate_random_name():
     return f"Stranger{random.randint(1000, 9999)}"
 
-# Bot Handlers (same as before)
+# Bot handlers
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 Welcome to Anonymous Chat Bot!\n"
@@ -110,7 +108,7 @@ app = Flask(__name__)
 # Telegram Application
 telegram_app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-# Add Handlers
+# Add handlers
 telegram_app.add_handler(CommandHandler("start", start))
 telegram_app.add_handler(CommandHandler("help", help_command))
 telegram_app.add_handler(CommandHandler("next", next_partner))
@@ -119,17 +117,29 @@ telegram_app.add_handler(CommandHandler("report", report))
 telegram_app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), relay_message))
 telegram_app.add_handler(MessageHandler(filters.COMMAND, unknown))
 
+# Track bot initialized status
+bot_started = False
+
 @app.route('/')
 def home():
     return 'Bot is running!'
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
+    global bot_started
     if request.method == "POST":
         update = Update.de_json(request.get_json(force=True), telegram_app.bot)
-        asyncio.run(telegram_app.process_update(update))
+        
+        async def process():
+            global bot_started
+            if not bot_started:
+                await telegram_app.initialize()
+                await telegram_app.start()
+                bot_started = True
+            await telegram_app.process_update(update)
+        
+        asyncio.run(process())
     return "ok"
-
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
