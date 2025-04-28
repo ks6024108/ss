@@ -6,6 +6,7 @@ from pymongo import MongoClient
 from flask import Flask, request
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
+import asyncio
 
 # Load environment variables
 load_dotenv()
@@ -124,8 +125,9 @@ def home():
 def webhook():
     if request.method == "POST":
         update = Update.de_json(request.get_json(force=True), telegram_app.bot)
-        telegram_app.update_queue.put(update)
+        asyncio.run(telegram_app.process_update(update))
     return "ok"
+
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
