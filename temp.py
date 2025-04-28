@@ -1,11 +1,9 @@
 import os
 import random
 import time
-import asyncio
 from dotenv import load_dotenv
 from pymongo import MongoClient
-from flask import Flask, request
-from telegram import Bot, Update
+from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
 # Load environment variables
@@ -13,10 +11,6 @@ load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 MONGO_URI = os.getenv("MONGO_URI")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")
-
-# Initialize Flask
-app = Flask(__name__)
 
 # Connect to MongoDB
 mongo_client = MongoClient(MONGO_URI)
@@ -25,15 +19,11 @@ waiting_users_collection = db["waiting_users"]
 active_chats_collection = db["active_chats"]
 reports_collection = db["reports"]
 
-# Initialize Telegram Bot and Application
-bot = Bot(BOT_TOKEN)
-application = ApplicationBuilder().token(BOT_TOKEN).build()
-
 # Generate random nickname
 def generate_random_name():
     return f"Stranger{random.randint(1000, 9999)}"
 
-# Command Handlers
+# Command handlers
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 Welcome to Anonymous Chat Bot!\n"
@@ -125,32 +115,18 @@ async def relay_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❌ Unknown command.")
 
-# Add handlers
-application.add_handler(CommandHandler("start", start))
-application.add_handler(CommandHandler("help", help_command))
-application.add_handler(CommandHandler("next", next_partner))
-application.add_handler(CommandHandler("stop", stop_chat))
-application.add_handler(CommandHandler("report", report))
-application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), relay_message))
-application.add_handler(MessageHandler(filters.COMMAND, unknown))
+def main():
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-# Webhook Setup
-async def set_webhook():
-    await bot.set_webhook(url=WEBHOOK_URL)
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("next", next_partner))
+    app.add_handler(CommandHandler("stop", stop_chat))
+    app.add_handler(CommandHandler("report", report))
+    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), relay_message))
+    app.add_handler(MessageHandler(filters.COMMAND, unknown))
 
-@app.before_first_request
-def before_first_request():
-    asyncio.run(set_webhook())
+    app.run_polling()
 
-# Flask Routes
-@app.route('/', methods=["GET", "POST"])
-def webhook():
-    if request.method == "POST":
-        update = Update.de_json(request.get_json(force=True), bot)
-        asyncio.run(application.process_update(update))
-    return "Hello from Anonymous Chat Bot!"
-
-# Main entry
 if __name__ == "__main__":
-    from waitress import serve
-    serve(app, host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
+    main()
