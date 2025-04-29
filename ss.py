@@ -147,10 +147,8 @@ def webhook():
     if request.method == "POST":
         update = Update.de_json(request.get_json(force=True), telegram_app.bot)
 
-        async def process_update():
-            await telegram_app.process_update(update)
-
-        loop.create_task(process_update())
+        # Wait for update to process
+        loop.run_until_complete(telegram_app.process_update(update))
 
     return "ok"
 
